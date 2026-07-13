@@ -25,14 +25,14 @@ async function run() {
   if (running.value || !code.value.trim()) return
   running.value = true; output.value = '...'; const start = performance.now()
   try {
-    const resp = await fetchWithTimeout('/api/run', { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: code.value })
+    const resp = await fetchWithTimeout('api/run', { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: code.value })
     const dur = Math.round(performance.now() - start); const text = await resp.text()
     try { const data = JSON.parse(text); duration.value = (data.duration_ms != null ? data.duration_ms : dur) + 'ms'; output.value = data.error ? '[Error] ' + data.error : (data.output || '(no output)') } catch { output.value = text }
     fetchStats()
   } catch (e) { output.value = e.name === 'AbortError' ? '[Timeout] Sandbox unavailable.' : '[Error] ' + e.message } finally { running.value = false }
 }
 
-async function fetchStats() { try { const r = await fetchWithTimeout('/api/stats'); if (r.ok) { const d = JSON.parse(await r.text()); todayRuns.value = d.today ?? '—' } } catch { /* */ } }
+async function fetchStats() { try { const r = await fetchWithTimeout('api/stats'); if (r.ok) { const d = JSON.parse(await r.text()); todayRuns.value = d.today ?? '—' } } catch { /* */ } }
 function reset() { initCode(); output.value = ''; duration.value = '—' }
 function onTab(e) { if (e.key === 'Tab') { e.preventDefault(); const ta = e.target; const s = ta.selectionStart; ta.value = ta.value.substring(0, s) + '    ' + ta.value.substring(ta.selectionEnd); ta.selectionStart = ta.selectionEnd = s + 4; code.value = ta.value } }
 function onKeydown(e) { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run() } }

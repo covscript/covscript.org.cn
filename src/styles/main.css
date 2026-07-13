@@ -6,8 +6,8 @@
 /* Self-hosted Eras Demi ITC — place ERASBD.TTF (or .woff2) in src/assets/fonts/ */
 @font-face {
   font-family: 'Eras Demi ITC';
-  src: url('/assets/fonts/eras-demi.woff2') format('woff2'),
-       url('/assets/fonts/eras-demi.ttf') format('truetype');
+  src: url('/fonts/eras-demi.woff2') format('woff2'),
+       url('/fonts/eras-demi.ttf') format('truetype');
   font-weight: 600;
   font-style: normal;
   font-display: swap;
