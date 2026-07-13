@@ -8,4 +8,4 @@ COPY --chown=sandbox:sandbox servers/sandbox.ecs server.ecs
 RUN ecs -u UTF8 -f -o . server.ecs && rm -f server.ecs
 VOLUME /app/data
 EXPOSE 8088
-CMD ["cs", "/app/server.csc", "config.json", "--data_dir", "/app/data", "--slots", "3", "--timeout", "5"]
+CMD ["cs", "-i", "/app", "/app/server.csc", "config.json", "--data_dir", "/app/data", "--slots", "3", "--timeout", "5"]
