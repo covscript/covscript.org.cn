@@ -22,7 +22,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,size=1m,mode=1777
-    pids_limit: 50
     cap_drop:
       - ALL
     security_opt:
@@ -32,6 +31,7 @@ services:
         limits:
           cpus: '1'
           memory: 256M
+          pids: 50
 
 volumes:
   sandbox_data:
