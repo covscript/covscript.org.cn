@@ -23,4 +23,4 @@ RUN ecs -u UTF8 -f -o . netutils.ecs && \
     rm -f netutils.ecs server.ecs
 
 EXPOSE 8080
-CMD ["cs", "-i", "/app", "/app/server.csc", "config.json", "--sandbox_host", "sandbox", "--sandbox_port", "8088"]
+CMD ["cs", "/app/server.csc", "config.json", "--sandbox_host", "sandbox", "--sandbox_port", "8088"]
