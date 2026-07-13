@@ -9,7 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG CS_TAG=ubuntu-schedule-release
 ARG CS_ARCH=x86_64
 
-# Download and extract CovScript SDK + cspkg repo
+# Download and extract CovScript SDK + cspkg repo.
+# The upstream release archives are not guaranteed to have a stable internal
+# layout across csbuild versions: some releases place the SDK files directly
+# at the archive root, while others nest them under a top-level "build/" (or
+# "cspkg-repo/") directory. The conditional moves below normalize either
+# layout into the expected /opt/covscript and /opt/covscript/cspkg-repo paths.
 RUN curl -fsSL -o /tmp/covscript.7z \
       "https://github.com/covscript/csbuild/releases/download/${CS_TAG}/covscript-ubuntu-${CS_ARCH}.7z" \
     && curl -fsSL -o /tmp/cspkg.7z \

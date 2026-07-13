@@ -66,6 +66,13 @@ jobs:
       - name: Set build cache options
         id: cache
         run: |
+          # Registry cache import/export requires authentication. PR builds
+          # don't log in to ghcr.io (see step above) and packages published
+          # via GITHUB_TOKEN are private by default (see
+          # https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
+          # so an anonymous cache pull/push would fail with 403. Leaving these
+          # empty simply disables cache import/export for PR builds; it does
+          # not require any manual package visibility change on GitHub.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "from=" >> "$GITHUB_OUTPUT"
             echo "to=" >> "$GITHUB_OUTPUT"
