@@ -36,6 +36,14 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # PR builds don't log in or push, so the base image built in this job
+          # must stay in the local Docker image store for the web/sandbox stages
+          # to consume via FROM without pulling from (or pushing to) ghcr.io.
+          # The classic "docker" driver shares images with the host daemon
+          # automatically; the "docker-container" driver (needed for registry
+          # cache export/import) does not.
+          driver: ${{ github.event_name == 'pull_request' && 'docker' || 'docker-container' }}
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
