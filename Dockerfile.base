@@ -14,11 +14,14 @@ RUN curl -fsSL -o /tmp/covscript.7z \
       "https://github.com/covscript/csbuild/releases/download/${CS_TAG}/covscript-ubuntu-${CS_ARCH}.7z" \
     && curl -fsSL -o /tmp/cspkg.7z \
       "https://github.com/covscript/csbuild/releases/download/${CS_TAG}/cspkg-ubuntu-${CS_ARCH}.7z" \
-    && 7z x /tmp/covscript.7z -o/opt/covscript -y \
+    && mkdir -p /opt/covscript-tmp \
+    && 7z x /tmp/covscript.7z -o/opt/covscript-tmp -y \
+    && mkdir -p /opt/covscript \
+    && sh -c 'if [ -d /opt/covscript-tmp/build ]; then mv /opt/covscript-tmp/build/* /opt/covscript/; else mv /opt/covscript-tmp/* /opt/covscript/; fi' \
     && mkdir -p /opt/covscript/cspkg-repo \
     && 7z x /tmp/cspkg.7z -o/opt/pkg-tmp -y \
     && sh -c 'if [ -d /opt/pkg-tmp/cspkg-repo ]; then mv /opt/pkg-tmp/cspkg-repo/* /opt/covscript/cspkg-repo/; else mv /opt/pkg-tmp/* /opt/covscript/cspkg-repo/; fi' \
-    && rm -rf /tmp/covscript.7z /tmp/cspkg.7z /opt/pkg-tmp
+    && rm -rf /tmp/covscript.7z /tmp/cspkg.7z /opt/covscript-tmp /opt/pkg-tmp
 
 ENV COVSCRIPT_HOME=/opt/covscript
 ENV PATH=/opt/covscript/bin:$PATH
