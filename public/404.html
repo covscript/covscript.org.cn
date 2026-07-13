@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#fafafa" />
+  <title>404 — CovScript</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@700;800&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Manrope, sans-serif; background: #fafafa; color: #1a1a2e; display: flex; align-items: center; justify-content: center; min-height: 100vh; text-align: center; }
+    .code { font-size: clamp(6rem, 20vw, 13rem); font-weight: 800; color: #7c3aed; }
+    .text { font-size: 1.15rem; color: #666; margin: .5rem 0 2rem; }
+    .back { display: inline-block; padding: 12px 30px; background: #7c3aed; color: #fff; border-radius: 10px; text-decoration: none; font-weight: 600; transition: all .3s; }
+    .back:hover { box-shadow: 0 0 32px rgba(124,58,237,.25); transform: translateY(-2px); }
+  </style>
+</head>
+<body>
+  <div><div class="code">404</div><p class="text" id="msg">Page Not Found</p><a href="/" class="back" id="link">Back to Home</a></div>
+  <script>var z=(navigator.language||'').startsWith('zh');if(z){document.getElementById('msg').textContent='页面未找到';document.getElementById('link').textContent='返回首页';}</script>
+</body>
+</html>

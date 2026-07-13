@@ -1,0 +1,26 @@
+# Stage 1: Frontend build
+FROM node:20-alpine AS frontend
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY src/ ./src/
+COPY public/ ./public/
+COPY index.html vite.config.js ./
+RUN npm run build
+
+# Stage 2: Web server
+ARG BASE_IMAGE=covscript-base:latest
+FROM ${BASE_IMAGE}
+WORKDIR /app
+COPY configs/web.json config.json
+COPY servers/web.ecs server.ecs
+COPY netutils.ecs netutils.ecs
+COPY --from=frontend /app/wwwroot/ /app/wwwroot/
+
+# Compile netutils + web server
+RUN ecs -u UTF8 -f -o . netutils.ecs && \
+    ecs -u UTF8 -f -o . server.ecs && \
+    rm -f netutils.ecs server.ecs
+
+EXPOSE 8080
+CMD ["cs", "/app/server.csc", "config.json", "--sandbox_host", "sandbox", "--sandbox_port", "8088"]

@@ -1,0 +1,295 @@
+import netutils
+import csdbc
+import csdbc_sqlite
+import codec.json
+import process
+import argparse
+
+# ============================================================================
+# Command-line Arguments
+# ============================================================================
+var parser = new argparse.ArgumentParser
+parser.program_name = "ecs sandbox.ecs"
+parser.description = "CovScript Code Sandbox Server"
+parser.add_argument("config", true, "JSON config file path")
+parser.add_option("--data_dir", false, false, "SQLite database directory").set_defaults("--data_dir", "./data")
+parser.add_option("--slots", false, false, "Max concurrent sandbox executions").set_defaults("--slots", 3)
+parser.add_option("--timeout", false, false, "Per-execution timeout in seconds").set_defaults("--timeout", 5)
+parser.add_option("--memory", false, false, "Per-execution memory limit in KB").set_defaults("--memory", 524288)
+
+var args = null
+try
+    args = parser.parse_args(context.cmd_args)
+catch e
+    system.out.println(e.what)
+    parser.print_help()
+    system.exit(0)
+end
+
+# ============================================================================
+# Sandbox Configuration
+# ============================================================================
+var SANDBOX_SLOTS = args.slots as integer
+var SANDBOX_TIMEOUT_S = args.timeout as integer
+var SANDBOX_MEMORY_KB = args.memory as integer
+var MAX_OUTPUT_SIZE = 65536       # 64KB
+var MAX_CODE_SIZE = 65536         # 64KB
+var TOTAL_TIMEOUT_MS = 15000  # Overall timeout for process spawn + execution
+
+var sandbox_avail = SANDBOX_SLOTS
+var run_count_total = 0
+var run_count_today = 0
+var today_date = ""
+var tmpfile_counter = 0
+
+# ============================================================================
+# Database Initialization
+# ============================================================================
+var data_dir = args.data_dir
+if !system.path.exist(data_dir)
+    system.path.mkdir_p(data_dir)
+end
+var db_path = data_dir + "/app.db"
+var db = csdbc_sqlite.open(db_path)
+db.just_exec("CREATE TABLE IF NOT EXISTS sandbox_log (" +
+    "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+    "client_ip TEXT," +
+    "code TEXT," +
+    "output TEXT," +
+    "exit_code INTEGER," +
+    "timed_out INTEGER DEFAULT 0," +
+    "duration_ms INTEGER," +
+    "created_at TEXT DEFAULT (datetime('now'))" +
+")")
+db.just_exec("CREATE INDEX IF NOT EXISTS idx_sandbox_log_time ON sandbox_log(created_at)")
+
+var insert_stmt = db.prepare(
+    "INSERT INTO sandbox_log (client_ip, code, output, exit_code, timed_out, duration_ms) " +
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
+
+system.out.println("Database initialized at: " + db_path)
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+function truncate(str, max_len)
+    if str.size > max_len
+        return str.substr(0, max_len)
+    else
+        return str
+    end
+end
+
+function sandbox_acquire()
+    while sandbox_avail <= 0
+        fiber.yield()
+    end
+    sandbox_avail = sandbox_avail - 1
+end
+
+function sandbox_release()
+    sandbox_avail = sandbox_avail + 1
+end
+
+# ============================================================================
+# /api/run — Code Sandbox
+# ============================================================================
+
+function sandbox_handler(server, session)
+    # Concurrency guard
+    if sandbox_avail <= 0
+        session.send_response(netutils.state_codes.code_503,
+            json.to_string(json.from_var({"error": "Server busy. Please try again later."}.to_hash_map())),
+            "application/json")
+        return
+    end
+
+    var code = session.post_data
+    if code == null || code.empty()
+        session.send_response(netutils.state_codes.code_400,
+            json.to_string(json.from_var({"error": "No code provided."}.to_hash_map())),
+            "application/json")
+        return
+    end
+
+    # Truncate code to limit
+    if code.size > MAX_CODE_SIZE
+        code = code.substr(0, MAX_CODE_SIZE)
+    end
+
+    sandbox_acquire()
+
+    var output = ""
+    var exit_code = 0
+    var timed_out = false
+    var duration_ms = 0
+    var tmpfile = ""
+    var outfile = ""
+
+    try
+        # Write code to temp file
+        tmpfile_counter = tmpfile_counter + 1
+        tmpfile = "/tmp/sandbox_" + to_string(runtime.time()) + "_" + to_string(tmpfile_counter) + ".ecs"
+        var ofs = iostream.ofstream(tmpfile)
+        ofs.write(code)
+        ofs.flush()
+
+        # Write stdout/stderr to a bounded tmpfs file instead of a pipe.
+        outfile = tmpfile + ".out"
+        var cmd = "ulimit -t " + to_string(SANDBOX_TIMEOUT_S) +
+                  " -v " + to_string(SANDBOX_MEMORY_KB) +
+                  " 2>/dev/null;" +
+                  "exec timeout --signal=KILL " + to_string(SANDBOX_TIMEOUT_S) +
+              "s cs " + tmpfile + " > " + outfile + " 2>&1"
+
+        var pb = new process.builder
+        pb.cmd("/bin/bash")
+        pb.arg({"-c", cmd})
+        var proc = pb.start()
+
+        # Wait for completion with overall timeout
+        var start_time = runtime.time()
+        var finished = false
+
+        loop
+            if proc.has_exited()
+                finished = true
+                break
+            end
+            var elapsed = runtime.time() - start_time
+            if elapsed > TOTAL_TIMEOUT_MS
+                try
+                    proc.kill(true)
+                catch e
+                    null
+                end
+                timed_out = true
+                break
+            end
+            runtime.delay(50)
+        end
+
+        var elapsed = runtime.time() - start_time
+        duration_ms = elapsed
+
+        # Read the captured output after the process exits without using a pipe.
+        try
+            if system.path.is_file(outfile)
+                output = netutils.read_file(outfile)
+            end
+        catch e
+            netutils.log("Read output error: " + e.what)
+        end
+
+        # Truncate output
+        output = truncate(output, MAX_OUTPUT_SIZE)
+
+        # Determine exit code
+        if timed_out
+            exit_code = -9  # SIGKILL
+        end
+        if finished
+            try
+                exit_code = proc.exit_code()
+            catch e
+                null
+            end
+        end
+
+        # Ensure temp file cleaned up
+        try
+            system.file.remove(tmpfile)
+            system.file.remove(outfile)
+        catch e
+            null
+        end
+
+        # Log to database
+        try
+            insert_stmt.bind(0, session.sock.remote_endpoint().address())
+            insert_stmt.bind(1, truncate(code, 4096))
+            insert_stmt.bind(2, output)
+            insert_stmt.bind(3, exit_code)
+            insert_stmt.bind(4, timed_out ? 1 : 0)
+            insert_stmt.bind(5, duration_ms)
+            insert_stmt.just_exec()
+        catch e
+            netutils.log("DB insert error: " + e.what)
+        end
+
+        run_count_total = run_count_total + 1
+        var current_date = runtime.utc_time()
+        var date_str = to_string(current_date.year) + "-" + to_string(current_date.mon) + "-" + to_string(current_date.mday)
+        if date_str != today_date
+            today_date = date_str
+            run_count_today = 0
+        end
+        run_count_today = run_count_today + 1
+
+        # Build JSON response
+        var resp = new hash_map
+        resp.insert("output", output)
+        resp.insert("exit_code", exit_code)
+        resp.insert("timed_out", timed_out)
+        resp.insert("duration_ms", duration_ms)
+
+        var resp_json = json.to_string(json.from_var(resp))
+        session.send_response(netutils.state_codes.code_200, resp_json, "application/json")
+        sandbox_release()
+
+    catch e
+        # Cleanup
+        try
+            system.file.remove(tmpfile)
+        catch ignored
+            null
+        end
+        try
+            system.file.remove(outfile)
+        catch ignored
+            null
+        end
+        sandbox_release()
+        netutils.log("Sandbox error: " + e.what)
+        var err = new hash_map
+        err.insert("error", e.what)
+        session.send_response(netutils.state_codes.code_500,
+            json.to_string(json.from_var(err)), "application/json")
+    end
+end
+
+# ============================================================================
+# /api/stats — Simple Statistics
+# ============================================================================
+
+function stats_handler(server, session)
+    var stats = new hash_map
+    stats.insert("total", run_count_total)
+    stats.insert("today", run_count_today)
+
+    session.send_response(netutils.state_codes.code_200,
+        json.to_string(json.from_var(stats)), "application/json")
+end
+
+# ============================================================================
+# Server Setup
+# ============================================================================
+
+try
+var config = json.to_var(json.from_stream(iostream.ifstream(args.config)))
+
+var server = (new netutils.http_server)
+    .set_config(config)
+    .bind_func("/api/run", sandbox_handler)
+    .bind_func("/api/stats", stats_handler)
+    .listen(config.port)
+
+system.out.println("Sandbox server starting on port " + to_string(config.port))
+system.out.println("Data directory: " + data_dir + "  Slots: " + to_string(SANDBOX_SLOTS) + "  Timeout: " + to_string(SANDBOX_TIMEOUT_S) + "s")
+server.run()
+catch e
+    system.out.println("Error starting server: " + e.what)
+    system.exit(1)
+end

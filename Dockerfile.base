@@ -1,0 +1,32 @@
+# CovScript shared base image
+# SDK downloaded from csbuild GitHub Releases (aligned with CI workflow)
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 curl ca-certificates p7zip-full passwd \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG CS_TAG=ubuntu-schedule-release
+ARG CS_ARCH=x86_64
+
+# Download and extract CovScript SDK + cspkg repo
+RUN curl -fsSL -o /tmp/covscript.7z \
+      "https://github.com/covscript/csbuild/releases/download/${CS_TAG}/covscript-ubuntu-${CS_ARCH}.7z" \
+    && curl -fsSL -o /tmp/cspkg.7z \
+      "https://github.com/covscript/csbuild/releases/download/${CS_TAG}/cspkg-ubuntu-${CS_ARCH}.7z" \
+    && 7z x /tmp/covscript.7z -o/opt/covscript -y \
+    && mkdir -p /opt/covscript/cspkg-repo \
+    && 7z x /tmp/cspkg.7z -o/opt/pkg-tmp -y \
+    && sh -c 'if [ -d /opt/pkg-tmp/cspkg-repo ]; then mv /opt/pkg-tmp/cspkg-repo/* /opt/covscript/cspkg-repo/; else mv /opt/pkg-tmp/* /opt/covscript/cspkg-repo/; fi' \
+    && rm -rf /tmp/covscript.7z /tmp/cspkg.7z /opt/pkg-tmp
+
+ENV COVSCRIPT_HOME=/opt/covscript
+ENV PATH=/opt/covscript/bin:$PATH
+
+# Configure cspkg and install all packages (network, sqlite, netutils, etc.)
+RUN mkdir -p /root/.cspkg \
+    && echo '{"arch":"amd64","home":"/opt/covscript","source":"file:///opt/covscript/cspkg-repo/","timeout_ms":3000}' \
+       > /root/.cspkg/config.json \
+    && chmod -R +x /opt/covscript/bin/ || true \
+    && cspkg install --import --yes \
+    && cspkg install ecs_bootstrap --yes

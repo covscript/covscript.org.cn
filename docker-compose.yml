@@ -1,0 +1,45 @@
+services:
+  web:
+    image: ghcr.io/covscript/homepage:latest
+    ports:
+      - "80:8080"
+    depends_on:
+      - sandbox
+    restart: always
+    networks:
+      - internal
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
+  sandbox:
+    image: ghcr.io/covscript/homepage/sandbox:latest
+    expose:
+      - "8088"
+    volumes:
+      - sandbox_data:/app/data
+    restart: always
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=1m,mode=1777
+    pids_limit: 50
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  sandbox_data:

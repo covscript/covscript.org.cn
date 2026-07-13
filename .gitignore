@@ -1,0 +1,10 @@
+node_modules/
+wwwroot/
+dist/
+.ecs_output/
+data/
+*.csc
+*.csp
+*.csym
+.DS_Store
+*.log

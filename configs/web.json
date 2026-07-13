@@ -1,0 +1,7 @@
+{
+    "wwwroot": "wwwroot",
+    "port": 8080,
+    "worker_count": 4,
+    "max_keep_alive": 100,
+    "keep_alive_timeout": 5000
+}
