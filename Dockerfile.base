@@ -1,6 +1,6 @@
 # CovScript shared base image
 # SDK downloaded from csbuild GitHub Releases (aligned with CI workflow)
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 curl ca-certificates p7zip-full passwd \
