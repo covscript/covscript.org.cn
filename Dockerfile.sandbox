@@ -6,8 +6,7 @@ WORKDIR /app
 COPY --chown=sandbox:sandbox configs/sandbox.json config.json
 COPY --chown=sandbox:sandbox servers/sandbox.ecs server.ecs
 COPY --chown=sandbox:sandbox netutils.ecs netutils.ecs
-RUN ecs install csdbc_sqlite --yes && \
-	ecs -u UTF8 -f -o . netutils.ecs && \
+RUN ecs -u UTF8 -f -o . netutils.ecs && \
 	ecs -u UTF8 -f -o . server.ecs && \
 	rm -f netutils.ecs server.ecs
 VOLUME /app/data

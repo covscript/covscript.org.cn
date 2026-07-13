@@ -13,6 +13,7 @@ RUN npm run build
 FROM ${BASE_IMAGE}
 WORKDIR /app
 COPY configs/web.json config.json
+RUN sed -i 's|"wwwroot": "wwwroot"|"wwwroot": "/app/wwwroot"|' config.json
 COPY servers/web.ecs server.ecs
 COPY netutils.ecs netutils.ecs
 COPY --from=frontend /app/wwwroot/ /app/wwwroot/

@@ -37,4 +37,4 @@ RUN mkdir -p /root/.cspkg \
        > /root/.cspkg/config.json \
     && chmod -R +x /opt/covscript/bin/ || true \
     && cspkg install --import --yes \
-    && cspkg install ecs_bootstrap network argparse --yes
+    && cspkg install ecs_bootstrap network argparse csdbc_sqlite --yes
