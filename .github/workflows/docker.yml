@@ -36,6 +36,14 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # PR builds don't log in or push, so the base image built in this job
+          # must stay in the local Docker image store for the web/sandbox stages
+          # to consume via FROM without pulling from (or pushing to) ghcr.io.
+          # The classic "docker" driver shares images with the host daemon
+          # automatically; the "docker-container" driver (needed for registry
+          # cache export/import) does not.
+          driver: ${{ github.event_name == 'pull_request' && 'docker' || 'docker-container' }}
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -55,6 +63,24 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
+      - name: Set build cache options
+        id: cache
+        run: |
+          # Registry cache import/export requires authentication. PR builds
+          # don't log in to ghcr.io (see step above) and packages published
+          # via GITHUB_TOKEN are private by default (see
+          # https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
+          # so an anonymous cache pull/push would fail with 403. Leaving these
+          # empty simply disables cache import/export for PR builds; it does
+          # not require any manual package visibility change on GitHub.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "from=" >> "$GITHUB_OUTPUT"
+            echo "to=" >> "$GITHUB_OUTPUT"
+          else
+            echo "from=type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base" >> "$GITHUB_OUTPUT"
+            echo "to=type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base,mode=max" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push base image
         uses: docker/build-push-action@v6
         with:
@@ -62,8 +88,8 @@ jobs:
           file: Dockerfile.base
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/base:${{ steps.meta.outputs.version }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base,mode=max
+          cache-from: ${{ steps.cache.outputs.from }}
+          cache-to: ${{ steps.cache.outputs.to }}
 
       - name: Build and push web image
         uses: docker/build-push-action@v6
@@ -75,8 +101,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base,mode=max
+          cache-from: ${{ steps.cache.outputs.from }}
+          cache-to: ${{ steps.cache.outputs.to }}
 
       - name: Build and push sandbox image
         uses: docker/build-push-action@v6
@@ -90,5 +116,5 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:${{ steps.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:latest
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base,mode=max
+          cache-from: ${{ steps.cache.outputs.from }}
+          cache-to: ${{ steps.cache.outputs.to }}

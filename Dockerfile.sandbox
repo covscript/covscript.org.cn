@@ -1,6 +1,6 @@
 ARG BASE_IMAGE=covscript-base:latest
 FROM ${BASE_IMAGE}
-RUN useradd -m -s /bin/bash sandbox && mkdir -p /app/data && chown sandbox:sandbox /app/data
+RUN useradd -m -s /bin/bash sandbox && mkdir -p /app/data && chown -R sandbox:sandbox /app
 USER sandbox
 WORKDIR /app
 COPY --chown=sandbox:sandbox configs/sandbox.json config.json
