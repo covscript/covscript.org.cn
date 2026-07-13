@@ -16,8 +16,9 @@ function initCode() { code.value = locale.value === 'zh' ? defaultCodeZh : defau
 onMounted(initCode)
 
 const FETCH_TIMEOUT = 20000
-async function fetchWithTimeout(url, opts = {}) {
-  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT)
+const STATS_TIMEOUT = 3000
+async function fetchWithTimeout(url, opts = {}, timeout = FETCH_TIMEOUT) {
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), timeout)
   try { return await fetch(url, { ...opts, signal: ctrl.signal }) } finally { clearTimeout(timer) }
 }
 
@@ -32,7 +33,7 @@ async function run() {
   } catch (e) { output.value = e.name === 'AbortError' ? '[Timeout] Sandbox unavailable.' : '[Error] ' + e.message } finally { running.value = false }
 }
 
-async function fetchStats() { try { const r = await fetchWithTimeout('api/stats'); if (r.ok) { const d = JSON.parse(await r.text()); todayRuns.value = d.today ?? '—' } } catch { /* */ } }
+async function fetchStats() { try { const r = await fetchWithTimeout('api/stats', {}, STATS_TIMEOUT); if (r.ok) { const d = JSON.parse(await r.text()); todayRuns.value = d.today ?? '—' } } catch { /* */ } }
 function reset() { initCode(); output.value = ''; duration.value = '—' }
 function onTab(e) { if (e.key === 'Tab') { e.preventDefault(); const ta = e.target; const s = ta.selectionStart; ta.value = ta.value.substring(0, s) + '    ' + ta.value.substring(ta.selectionEnd); ta.selectionStart = ta.selectionEnd = s + 4; code.value = ta.value } }
 function onKeydown(e) { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run() } }

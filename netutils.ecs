@@ -1008,6 +1008,14 @@ class http_client
         timeout_ms = ms
     end
 
+    function _await(state)
+        if timeout_ms != null
+            return state.wait_for(timeout_ms)
+        else
+            return state.wait()
+        end
+    end
+
     function close()
         if sock != null && sock.is_open()
             sock.safe_shutdown()
@@ -1101,13 +1109,12 @@ class http_client
                 pending = pending.substr(pos + delim.size, pending.size - pos - delim.size)
                 return data
             end
-            var chunk = null
-            try
-                chunk = sock.receive(http_client_read_chunk)
-            catch e
+            var state = async.read(sock, http_client_read_chunk)
+            if !_await(state)
                 return null
             end
-            if chunk == null || chunk.empty()
+            var chunk = state.get_result()
+            if chunk.empty()
                 return null
             end
             pending.append(chunk)
@@ -1144,13 +1151,12 @@ class http_client
             if step > http_client_read_chunk
                 step = http_client_read_chunk
             end
-            var chunk = null
-            try
-                chunk = sock.receive(step)
-            catch e
+            var state = async.read(sock, step)
+            if !_await(state)
                 return null
             end
-            if chunk == null || chunk.empty()
+            var chunk = state.get_result()
+            if chunk.empty()
                 return null
             end
             out.append(chunk)
@@ -1282,13 +1288,12 @@ class http_client
                     body_buf.append(pending)
                     pending = ""
                     loop
-                        var chunk = null
-                        try
-                            chunk = sock.receive(http_client_read_chunk)
-                        catch e
+                        var state = async.read(sock, http_client_read_chunk)
+                        if !_await(state)
                             break
                         end
-                        if chunk == null || chunk.empty()
+                        var chunk = state.get_result()
+                        if chunk.empty()
                             break
                         end
                         if body_buf.size > http_max_body_size - chunk.size
@@ -1355,7 +1360,12 @@ class http_client
         req.append("\r\n")
         req.append(req_body)
         try
-            sock.write(req)
+            var state = async.write(sock, req)
+            if !_await(state)
+                log("HTTP write error: timeout or I/O failure")
+                close()
+                return null
+            end
         catch e
             log("HTTP write error: " + e.what)
             close()

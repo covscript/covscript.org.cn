@@ -1,6 +1,6 @@
 {
     "port": 8088,
     "worker_count": 4,
-    "max_keep_alive": 50,
-    "keep_alive_timeout": 10000
+    "max_keep_alive": 10,
+    "keep_alive_timeout": 2000
 }
