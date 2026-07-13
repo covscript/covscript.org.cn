@@ -5,12 +5,10 @@ services:
       context: .
       dockerfile: Dockerfile.web
     ports:
-      - "80:8080"
+      - "8080:8080"
     depends_on:
       - sandbox
     restart: always
-    networks:
-      - internal
 
   sandbox:
     build:
@@ -29,12 +27,6 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    networks:
-      - internal
-
-networks:
-  internal:
-    driver: bridge
 
 volumes:
   sandbox_data:

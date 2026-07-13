@@ -2,12 +2,10 @@ services:
   web:
     image: ghcr.io/covscript/homepage:latest
     ports:
-      - "80:8080"
+      - "8080:8080"
     depends_on:
       - sandbox
     restart: always
-    networks:
-      - internal
     deploy:
       resources:
         limits:
@@ -29,17 +27,11 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    networks:
-      - internal
     deploy:
       resources:
         limits:
           cpus: '1'
           memory: 256M
-
-networks:
-  internal:
-    driver: bridge
 
 volumes:
   sandbox_data:
