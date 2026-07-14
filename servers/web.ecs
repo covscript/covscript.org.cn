@@ -4,7 +4,6 @@ import argparse
 
 netutils.log_stream = system.err
 
-# Parse command-line arguments
 var parser = new argparse.ArgumentParser
 parser.program_name = "ecs web.ecs"
 parser.description = "CovScript Homepage Web Server"
@@ -22,83 +21,14 @@ catch e
 end
 
 var config = json.to_var(json.from_stream(iostream.ifstream(args.config)))
-
-var sandbox_host = args.sandbox_host
-var sandbox_port = to_string(args.sandbox_port)
-var sandbox_base = "http://" + sandbox_host + ":" + sandbox_port
+var sandbox_base = "http://" + args.sandbox_host + ":" + to_string(args.sandbox_port)
 
 var server = (new netutils.http_server)
     .set_config(config)
     .bind_code(netutils.state_codes.code_404, "404.html")
-
-# Proxy timeout must exceed sandbox execution limit (5s) + overhead
-var PROXY_TIMEOUT_MS = 20000
-var RATE_LIMIT = 10
-var RATE_WINDOW_MS = 60000
-var ip_requests = new hash_map
-
-function is_rate_limited(session)
-    var client_ip = session.sock.remote_endpoint().address()
-    var now = runtime.time()
-    if !ip_requests.exist(client_ip)
-        ip_requests.insert(client_ip, {"count": 1, "window_start": now}.to_hash_map())
-        return false
-    end
-
-    var entry = ip_requests[client_ip]
-    if now - entry["window_start"] > RATE_WINDOW_MS
-        entry["count"] = 1
-        entry["window_start"] = now
-        return false
-    end
-    if entry["count"] >= RATE_LIMIT
-        return true
-    end
-    entry["count"] = entry["count"] + 1
-    return false
-end
-
-function proxy_to_sandbox(server, session)
-    if session.url == "/api/run" && is_rate_limited(session)
-        session.send_response("429 Too Many Requests",
-            "{\"error\": \"Rate limit exceeded. Try again later.\"}", "application/json")
-        return
-    end
-
-    var target_url = sandbox_base + session.url
-    var headers = new array
-    var resp = null
-
-    # Create a fresh http_client per request to avoid shared-state races
-    var client = new netutils.http_client
-    client.set_timeout_ms(PROXY_TIMEOUT_MS)
-
-    if session.method == "POST"
-        resp = client.post(target_url, headers, session.post_data)
-    else
-        resp = client.http_request(session.method, target_url, headers, "")
-    end
-
-    if resp == null
-        netutils.log("Sandbox proxy failed: " + target_url)
-        session.send_response(netutils.state_codes.code_503,
-            "{\"error\": \"Sandbox service unavailable\"}", "application/json")
-    else
-        var content_type = "application/json"
-        if resp["headers"].exist("content-type")
-            content_type = resp["headers"]["content-type"]
-        end
-        var status = "200 OK"
-        if resp["status_code"] != 200
-            status = to_string(resp["status_code"]) + " Error"
-        end
-        session.send_response(status, resp["body"], content_type)
-    end
-end
-
-server.bind_func("/api/run", proxy_to_sandbox)
-server.bind_func("/api/stats", proxy_to_sandbox)
-server.listen(config.port)
+    .bind_proxy("/api/stats", sandbox_base, 5000)
+    .bind_proxy("/api/run", sandbox_base, 20000)
+    .listen(config.port)
 
 system.out.println("Web server: http://localhost:" + to_string(config.port))
 system.out.println("Sandbox backend: " + sandbox_base)

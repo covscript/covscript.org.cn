@@ -41,6 +41,9 @@ var run_count_total = 0
 var run_count_today = 0
 var today_date = ""
 var tmpfile_counter = 0
+var RATE_LIMIT = 10
+var RATE_WINDOW_MS = 60000
+var ip_requests = new hash_map
 
 # ============================================================================
 # Database Initialization
@@ -104,6 +107,27 @@ function sandbox_handler(server, session)
             json.to_string(json.from_var({"error": "Server busy. Please try again later."}.to_hash_map())),
             "application/json")
         return
+    end
+
+    # Rate limit per IP (60s window)
+    var client_ip = session.sock.remote_endpoint().address()
+    var now = runtime.time()
+    if !ip_requests.exist(client_ip)
+        ip_requests.insert(client_ip, {"count": 1, "window_start": now}.to_hash_map())
+    else
+        var entry = ip_requests[client_ip]
+        if now - entry["window_start"] > RATE_WINDOW_MS
+            entry["count"] = 1
+            entry["window_start"] = now
+        else
+            if entry["count"] >= RATE_LIMIT
+                session.send_response("429 Too Many Requests",
+                    json.to_string(json.from_var({"error": "Rate limit exceeded. Try again later."}.to_hash_map())),
+                    "application/json")
+                return
+            end
+            entry["count"] = entry["count"] + 1
+        end
     end
 
     var code = session.post_data
