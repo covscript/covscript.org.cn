@@ -1,0 +1,66 @@
+/* CovScript Design Tokens */
+/* Brand evolution: electric teal + warm coral on deep/light rhythm */
+
+:root {
+  /* ── Primary: Electric Teal ── */
+  --color-primary:        #00C4B4;
+  --color-primary-hover:  #00A698;
+  --color-primary-deep:   #06716A;
+  --color-primary-glow:   rgba(0, 196, 180, 0.25);
+
+  /* ── Accent: Warm Coral ── */
+  --color-accent:         #FF5C35;
+  --color-accent-hover:   #E04828;
+  --color-accent-glow:    rgba(255, 92, 53, 0.2);
+
+  /* ── Surfaces ── */
+  --color-bg:             #FAFCFB;
+  --color-surface:        #FFFFFF;
+  --color-border:         #DFECE8;
+
+  /* ── Text ── */
+  --color-text:           #0A1929;
+  --color-text-secondary: #4A6A7A;
+  --color-text-muted:     #7B99A6;
+
+  /* ── Dark Surfaces ── */
+  --color-dark-bg:        #081018;
+  --color-dark-surface:   #101D2B;
+  --color-dark-border:    rgba(255, 255, 255, 0.08);
+
+  /* ── Code ── */
+  --color-code-bg:        #060E18;
+  --color-code-text:      #D6EEEA;
+  --color-code-accent:    #65D5C8;
+
+  /* ── Feedback ── */
+  --color-success:        #10B981;
+  --color-warning:        #F59E0B;
+  --color-error:          #EF4444;
+
+  /* ── Typography Scale ── */
+  --font-display: 'Eras Demi ITC', 'Manrope', sans-serif;
+  --font-body:    'Manrope', sans-serif;
+  --font-code:    'DM Mono', monospace;
+
+  /* ── Spacing Scale ── */
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  16px;
+  --space-lg:  24px;
+  --space-xl:  32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+  --space-4xl: 96px;
+
+  /* ── Radii ── */
+  --radius-sm: 2px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+
+  /* ── Shadows ── */
+  --shadow-sm:  0 1px 3px rgba(10, 25, 41, 0.06);
+  --shadow-md:  0 4px 16px rgba(10, 25, 41, 0.08);
+  --shadow-lg:  0 12px 32px rgba(10, 25, 41, 0.12);
+  --shadow-glow: 0 0 24px var(--color-primary-glow);
+}

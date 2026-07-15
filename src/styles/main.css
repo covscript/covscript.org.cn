@@ -1,8 +1,9 @@
 /* CovScript Homepage */
 
 @import './fonts.css';
+@import './variables.css';
 
-/* Self-hosted Eras Demi ITC — place ERASBD.TTF (or .woff2) in src/assets/fonts/ */
+/* Self-hosted Eras Demi ITC */
 @font-face {
   font-family: 'Eras Demi ITC';
   src: url('/fonts/eras-demi.ttf') format('truetype');
@@ -12,30 +13,32 @@
 }
 
 :root {
-  color: #102a43;
-  background: #f7faf9;
+  color: var(--color-text);
+  background: var(--color-bg);
   font-synthesis: none;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; scroll-padding-top: 72px; }
 body {
-  font-family: Manrope, sans-serif; font-size: 16px; line-height: 1.65;
-  color: #102a43; background: #f7faf9; -webkit-font-smoothing: antialiased;
+  font-family: var(--font-body);
+  font-size: 16px; line-height: 1.65;
+  color: var(--color-text); background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
-h1, h2, h3, h4, h5, h6 { font-family: Manrope, sans-serif; font-weight: 700; }
+h1, h2, h3, h4, h5, h6 { font-family: var(--font-body); font-weight: 700; }
 a { color: inherit; text-decoration: none; }
 button, textarea { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 img { max-width: 100%; height: auto; }
-code, pre, textarea { font-family: 'DM Mono', monospace; }
+code, pre, textarea { font-family: var(--font-code); }
 
-:focus-visible { outline: 3px solid rgba(18, 183, 168, .45); outline-offset: 3px; }
+:focus-visible { outline: 3px solid rgba(0, 196, 180, 0.45); outline-offset: 3px; }
 
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: #e7efed; }
 ::-webkit-scrollbar-thumb { background: #97b2ad; border-radius: 8px; }
 ::-webkit-scrollbar-thumb:hover { background: #668c85; }
 
-::selection { background: #bcebe4; color: #082f38; }
+::selection { background: rgba(0, 196, 180, 0.2); color: #0A1929; }

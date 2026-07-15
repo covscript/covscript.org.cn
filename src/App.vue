@@ -1,12 +1,7 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import NavBar from './components/NavBar.vue'
-import HeroSection from './components/HeroSection.vue'
-import FeaturesSection from './components/FeaturesSection.vue'
-import PlaygroundSection from './components/PlaygroundSection.vue'
-import QuickStartSection from './components/QuickStartSection.vue'
-import FooterSection from './components/FooterSection.vue'
+import Layout from './components/Layout.vue'
 
 const { locale } = useI18n()
 
@@ -20,15 +15,15 @@ function setLang(lang) {
 const detected = localStorage.getItem('covscript-lang') ||
   (navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en')
 document.documentElement.lang = detected === 'zh' ? 'zh-CN' : 'en'
+
+// Update document title on route change
+watch(() => locale.value, () => {
+  // Title will be handled per-page via onMounted
+})
 </script>
 
 <template>
-  <NavBar :current-lang="locale" @toggle-lang="setLang(locale === 'zh' ? 'en' : 'zh')" />
-  <HeroSection />
-  <FeaturesSection />
-  <PlaygroundSection />
-  <QuickStartSection />
-  <FooterSection />
+  <Layout :current-lang="locale" @toggle-lang="setLang(locale === 'zh' ? 'en' : 'zh')" />
 </template>
 
 <style>
