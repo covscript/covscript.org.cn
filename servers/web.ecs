@@ -2,7 +2,7 @@ import netutils
 import codec.json
 import argparse
 
-netutils.log_stream = system.err
+netutils.log_stream = system.out
 
 var parser = new argparse.ArgumentParser
 parser.program_name = "ecs web.ecs"

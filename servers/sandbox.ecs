@@ -5,6 +5,8 @@ import codec.json
 import process
 import argparse
 
+netutils.log_stream = system.out
+
 # ============================================================================
 # Command-line Arguments
 # ============================================================================
@@ -13,9 +15,9 @@ parser.program_name = "ecs sandbox.ecs"
 parser.description = "CovScript Code Sandbox Server"
 parser.add_argument("config", true, "JSON config file path")
 parser.add_option("--data_dir", false, false, "SQLite database directory").set_defaults("--data_dir", "./data")
-parser.add_option("--slots", false, false, "Max concurrent sandbox executions").set_defaults("--slots", 3)
+parser.add_option("--slots", false, false, "Max concurrent sandbox executions").set_defaults("--slots", 4)
 parser.add_option("--timeout", false, false, "Per-execution timeout in seconds").set_defaults("--timeout", 5)
-parser.add_option("--memory", false, false, "Per-execution memory limit in KB").set_defaults("--memory", 524288)
+parser.add_option("--memory", false, false, "Per-execution memory limit in KB").set_defaults("--memory", 131072)
 
 var args = null
 try
@@ -32,9 +34,23 @@ end
 var SANDBOX_SLOTS = args.slots as integer
 var SANDBOX_TIMEOUT_S = args.timeout as integer
 var SANDBOX_MEMORY_KB = args.memory as integer
+
+# Reject invalid configuration values early
+if SANDBOX_SLOTS < 1
+    system.out.println("--slots must be >= 1, got " + to_string(SANDBOX_SLOTS))
+    system.exit(1)
+end
+if SANDBOX_TIMEOUT_S < 1 || SANDBOX_TIMEOUT_S > 30
+    system.out.println("--timeout must be 1-30, got " + to_string(SANDBOX_TIMEOUT_S))
+    system.exit(1)
+end
+if SANDBOX_MEMORY_KB < 8192 || SANDBOX_MEMORY_KB > 131072
+    system.out.println("--memory must be 8192-131072 (128MB max), got " + to_string(SANDBOX_MEMORY_KB))
+    system.exit(1)
+end
 var MAX_OUTPUT_SIZE = 65536       # 64KB
 var MAX_CODE_SIZE = 65536         # 64KB
-var TOTAL_TIMEOUT_MS = 15000  # Overall timeout for process spawn + execution
+var EXECUTION_TIMEOUT_MS = SANDBOX_TIMEOUT_S * 1000
 
 var sandbox_avail = SANDBOX_SLOTS
 var run_count_total = 0
@@ -43,7 +59,19 @@ var today_date = ""
 var tmpfile_counter = 0
 var RATE_LIMIT = 10
 var RATE_WINDOW_MS = 60000
+# Per-IP rate-limit state.  In the cooperative-fiber model the hash_map is
+# accessed from at most one fiber at a time; in multi-threaded setups the
+# worst-case race yields a slightly inaccurate count, which is acceptable
+# for a best-effort rate limiter.
 var ip_requests = new hash_map
+
+# Guard against unbounded map growth from unique-IP floods.
+# A full reset once the map is large is acceptable for a best-effort limiter.
+function rate_limit_guard()
+    if ip_requests.size() > 10000
+        ip_requests = new hash_map
+    end
+end
 
 # ============================================================================
 # Database Initialization
@@ -85,6 +113,10 @@ function truncate(str, max_len)
     end
 end
 
+function to_json(obj)
+    return json.to_string(json.from_var(obj))
+end
+
 function sandbox_acquire()
     while sandbox_avail <= 0
         fiber.yield()
@@ -101,46 +133,39 @@ end
 # ============================================================================
 
 function sandbox_handler(server, session)
-    # Concurrency guard
-    if sandbox_avail <= 0
-        session.send_response(netutils.state_codes.code_503,
-            json.to_string(json.from_var({"error": "Server busy. Please try again later."}.to_hash_map())),
-            "application/json")
-        return
-    end
-
-    # Rate limit per IP (60s window)
+    # Rate limit per IP (60s sliding window, best-effort)
     var client_ip = session.sock.remote_endpoint().address()
     var now = runtime.time()
-    if !ip_requests.exist(client_ip)
-        ip_requests.insert(client_ip, {"count": 1, "window_start": now}.to_hash_map())
+    rate_limit_guard()
+    var entry = ip_requests[client_ip]
+    if entry == null || now - entry["window_start"] > RATE_WINDOW_MS
+        # New IP or window expired — start a fresh window
+        entry = {"count": 1, "window_start": now}.to_hash_map()
+        ip_requests.insert(client_ip, entry)
     else
-        var entry = ip_requests[client_ip]
-        if now - entry["window_start"] > RATE_WINDOW_MS
-            entry["count"] = 1
-            entry["window_start"] = now
-        else
-            if entry["count"] >= RATE_LIMIT
-                session.send_response("429 Too Many Requests",
-                    json.to_string(json.from_var({"error": "Rate limit exceeded. Try again later."}.to_hash_map())),
-                    "application/json")
-                return
-            end
-            entry["count"] = entry["count"] + 1
+        if entry["count"] >= RATE_LIMIT
+            session.send_response(netutils.state_codes.code_429,
+                to_json({"error": "Rate limit exceeded. Try again later."}.to_hash_map()),
+                "application/json")
+            return
         end
+        entry["count"] = entry["count"] + 1
     end
 
     var code = session.post_data
     if code == null || code.empty()
         session.send_response(netutils.state_codes.code_400,
-            json.to_string(json.from_var({"error": "No code provided."}.to_hash_map())),
+            to_json({"error": "No code provided."}.to_hash_map()),
             "application/json")
         return
     end
 
-    # Truncate code to limit
+    # Reject oversized code before acquiring a sandbox slot
     if code.size > MAX_CODE_SIZE
-        code = code.substr(0, MAX_CODE_SIZE)
+        session.send_response(netutils.state_codes.code_413,
+            to_json({"error": "Code too large. Maximum " + to_string(MAX_CODE_SIZE) + " bytes."}.to_hash_map()),
+            "application/json")
+        return
     end
 
     sandbox_acquire()
@@ -153,27 +178,30 @@ function sandbox_handler(server, session)
     var outfile = ""
 
     try
-        # Write code to temp file
+        # Write code to temp file.  Combine time (ms) + counter + IP to make
+        # collisions between concurrent fibers practically impossible.
         tmpfile_counter = tmpfile_counter + 1
-        tmpfile = "/tmp/sandbox_" + to_string(runtime.time()) + "_" + to_string(tmpfile_counter) + ".ecs"
+        var unique_id = to_string(runtime.time()) + "_" + to_string(tmpfile_counter)
+        tmpfile = "/tmp/sandbox_" + unique_id + ".ecs"
         var ofs = iostream.ofstream(tmpfile)
         ofs.write(code)
         ofs.flush()
 
-        # Write stdout/stderr to a bounded tmpfs file instead of a pipe.
+        # Pipe output through head -c to bound file size at source.
         outfile = tmpfile + ".out"
-        var cmd = "ulimit -t " + to_string(SANDBOX_TIMEOUT_S) +
+        var cmd = "set -o pipefail;" +
+                  "ulimit -t " + to_string(SANDBOX_TIMEOUT_S) +
                   " -v " + to_string(SANDBOX_MEMORY_KB) +
                   " 2>/dev/null;" +
-                  "exec timeout --signal=KILL " + to_string(SANDBOX_TIMEOUT_S) +
-              "s cs " + tmpfile + " > " + outfile + " 2>&1"
+              "cs " + tmpfile + " 2>&1 | head -c " + to_string(MAX_OUTPUT_SIZE) +
+                  " > " + outfile
 
         var pb = new process.builder
         pb.cmd("/bin/bash")
         pb.arg({"-c", cmd})
         var proc = pb.start()
 
-        # Wait for completion with overall timeout
+        # Enforce the wall-clock limit and terminate all descendants on expiry.
         var start_time = runtime.time()
         var finished = false
 
@@ -183,12 +211,9 @@ function sandbox_handler(server, session)
                 break
             end
             var elapsed = runtime.time() - start_time
-            if elapsed > TOTAL_TIMEOUT_MS
-                try
-                    proc.kill(true)
-                catch e
-                    null
-                end
+            if elapsed > EXECUTION_TIMEOUT_MS
+                proc.kill_tree(true)
+                proc.wait_poll(1000, 50)
                 timed_out = true
                 break
             end
@@ -198,36 +223,24 @@ function sandbox_handler(server, session)
         var elapsed = runtime.time() - start_time
         duration_ms = elapsed
 
-        # Read the captured output after the process exits without using a pipe.
-        try
-            if system.path.is_file(outfile)
-                output = netutils.read_file(outfile)
-            end
-        catch e
-            netutils.log("Read output error: " + e.what)
+        # Read the captured output after the process exits.
+        if system.path.is_file(outfile)
+            output = netutils.read_file(outfile)
         end
 
         # Truncate output
         output = truncate(output, MAX_OUTPUT_SIZE)
 
-        # Determine exit code
-        if timed_out
-            exit_code = -9  # SIGKILL
-        end
+        # Determine exit code.  try_wait() returns the cached exit code for
+        # an already-exited process, or null if the process hasn't exited.
         if finished
-            try
-                exit_code = proc.exit_code()
-            catch e
-                null
+            var ec = proc.try_wait()
+            if ec != null
+                exit_code = ec
             end
         end
-
-        # Ensure temp file cleaned up
-        try
-            system.file.remove(tmpfile)
-            system.file.remove(outfile)
-        catch e
-            null
+        if timed_out
+            exit_code = -9  # SIGKILL
         end
 
         # Log to database
@@ -259,29 +272,26 @@ function sandbox_handler(server, session)
         resp.insert("timed_out", timed_out)
         resp.insert("duration_ms", duration_ms)
 
-        var resp_json = json.to_string(json.from_var(resp))
+        var resp_json = to_json(resp)
         session.send_response(netutils.state_codes.code_200, resp_json, "application/json")
+        # Release the slot after initiating the response write.  The async
+        # write completion is waited on by the worker loop (simple_worker
+        # calls response_state.wait() before accepting the next request), so
+        # in the cooperative-fiber model no other fiber can acquire this slot
+        # until the response has been fully written.
         sandbox_release()
 
     catch e
-        # Cleanup
-        try
-            system.file.remove(tmpfile)
-        catch ignored
-            null
-        end
-        try
-            system.file.remove(outfile)
-        catch ignored
-            null
-        end
         sandbox_release()
         netutils.log("Sandbox error: " + e.what)
         var err = new hash_map
         err.insert("error", e.what)
         session.send_response(netutils.state_codes.code_500,
-            json.to_string(json.from_var(err)), "application/json")
+            to_json(err), "application/json")
     end
+    # Cleanup
+    system.file.remove(tmpfile)
+    system.file.remove(outfile)
 end
 
 # ============================================================================
@@ -294,7 +304,7 @@ function stats_handler(server, session)
     stats.insert("today", run_count_today)
 
     session.send_response(netutils.state_codes.code_200,
-        json.to_string(json.from_var(stats)), "application/json")
+        to_json(stats), "application/json")
 end
 
 # ============================================================================

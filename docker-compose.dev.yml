@@ -9,6 +9,11 @@ services:
     depends_on:
       - sandbox
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
 
   sandbox:
     build:
@@ -27,6 +32,11 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
 
 volumes:
   sandbox_data:
