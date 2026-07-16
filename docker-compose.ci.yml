@@ -1,0 +1,26 @@
+# CI integration-test compose file.
+# Standalone (not an override) — starts pre-built images tagged covscript-*-ci
+# and exposes both ports to the host so the test scripts can exercise the full
+# stack including direct sandbox access.
+services:
+  sandbox:
+    image: covscript-sandbox:ci
+    ports:
+      - "8088:8088"
+    volumes:
+      - sandbox_data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=1m,mode=1777
+    restart: "no"
+
+  web:
+    image: covscript-web:ci
+    ports:
+      - "8080:8080"
+    depends_on:
+      - sandbox
+    restart: "no"
+
+volumes:
+  sandbox_data:

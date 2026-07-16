@@ -68,7 +68,7 @@ var ip_requests = new hash_map
 # Guard against unbounded map growth from unique-IP floods.
 # A full reset once the map is large is acceptable for a best-effort limiter.
 function rate_limit_guard()
-    if ip_requests.size() > 10000
+    if ip_requests.size > 10000
         ip_requests = new hash_map
     end
 end
@@ -137,12 +137,13 @@ function sandbox_handler(server, session)
     var client_ip = session.sock.remote_endpoint().address()
     var now = runtime.time()
     rate_limit_guard()
-    var entry = ip_requests[client_ip]
-    if entry == null || now - entry["window_start"] > RATE_WINDOW_MS
+    if !ip_requests.exist(client_ip) || now - ip_requests[client_ip]["window_start"] > RATE_WINDOW_MS
         # New IP or window expired — start a fresh window
-        entry = {"count": 1, "window_start": now}.to_hash_map()
-        ip_requests.insert(client_ip, entry)
+        ip_requests.insert(client_ip, {"count": 1, "window_start": now}.to_hash_map())
     else
+        # hash_map reads are copy-by-value; bind a reference so the
+        # counter increment mutates the stored entry.
+        link entry = ip_requests[client_ip]
         if entry["count"] >= RATE_LIMIT
             session.send_response(netutils.state_codes.code_429,
                 to_json({"error": "Rate limit exceeded. Try again later."}.to_hash_map()),
@@ -217,7 +218,10 @@ function sandbox_handler(server, session)
                 timed_out = true
                 break
             end
-            runtime.delay(50)
+            # Yield the fiber instead of runtime.delay(): delay blocks the
+            # whole process, stalling every other connection's fiber until
+            # this execution finishes (serialized slots + spurious 408s).
+            fiber.yield()
         end
 
         var elapsed = runtime.time() - start_time
@@ -237,6 +241,11 @@ function sandbox_handler(server, session)
             var ec = proc.try_wait()
             if ec != null
                 exit_code = ec
+            end
+            # CPU-bound runs are killed by ulimit -t with SIGKILL (128+9=137)
+            # before the wall-clock monitor fires — report that as a timeout.
+            if exit_code == 137
+                timed_out = true
             end
         end
         if timed_out

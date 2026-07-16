@@ -37,13 +37,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
-          # PR builds don't log in or push, so the base image built in this job
-          # must stay in the local Docker image store for the web/sandbox stages
-          # to consume via FROM without pulling from (or pushing to) ghcr.io.
-          # The classic "docker" driver shares images with the host daemon
-          # automatically; the "docker-container" driver (needed for registry
-          # cache export/import) does not.
-          driver: ${{ github.event_name == 'pull_request' && 'docker' || 'docker-container' }}
+          # Use the classic "docker" driver so `load: true` dumps images into
+          # the host daemon where docker compose can reach them. Registry
+          # cache import/export requires "docker-container", but we trade
+          # that for test-before-push safety.
+          driver: docker
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -63,58 +61,117 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Set build cache options
-        id: cache
-        run: |
-          # Registry cache import/export requires authentication. PR builds
-          # don't log in to ghcr.io (see step above) and packages published
-          # via GITHUB_TOKEN are private by default (see
-          # https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
-          # so an anonymous cache pull/push would fail with 403. Leaving these
-          # empty simply disables cache import/export for PR builds; it does
-          # not require any manual package visibility change on GitHub.
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "from=" >> "$GITHUB_OUTPUT"
-            echo "to=" >> "$GITHUB_OUTPUT"
-          else
-            echo "from=type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base" >> "$GITHUB_OUTPUT"
-            echo "to=type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/buildcache:base,mode=max" >> "$GITHUB_OUTPUT"
-          fi
+      # ------------------------------------------------------------------
+      # Build phase — all images loaded into local Docker (push: false).
+      # Each image gets TWO tag sets: the final ghcr.io tag for pushing
+      # later, plus a fixed `covscript-*-ci` alias so docker-compose.ci.yml
+      # doesn't need to know the per-build sha / branch.
+      # ------------------------------------------------------------------
 
-      - name: Build and push base image
+      - name: Build base image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.base
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/base:${{ steps.meta.outputs.version }}
-          cache-from: ${{ steps.cache.outputs.from }}
-          cache-to: ${{ steps.cache.outputs.to }}
+          push: false
+          load: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/base:${{ steps.meta.outputs.version }}
+            covscript-base:ci
 
-      - name: Build and push web image
+      - name: Build web image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.web
+          push: false
+          load: true
           build-args: |
             BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/base:${{ steps.meta.outputs.version }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            covscript-web:ci
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: ${{ steps.cache.outputs.from }}
-          cache-to: ${{ steps.cache.outputs.to }}
 
-      - name: Build and push sandbox image
+      - name: Build sandbox image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.sandbox
+          push: false
+          load: true
           build-args: |
             BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/base:${{ steps.meta.outputs.version }}
-          push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:${{ steps.meta.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:latest
+            covscript-sandbox:ci
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: ${{ steps.cache.outputs.from }}
-          cache-to: ${{ steps.cache.outputs.to }}
+
+      # ------------------------------------------------------------------
+      # Test phase — spin up the full stack, run the test suite, tear down.
+      # Any non-zero exit code stops the job and prevents the push.
+      # ------------------------------------------------------------------
+
+      - name: Start services
+        run: |
+          docker compose -f docker-compose.ci.yml up -d
+          # Wait for both services to accept connections
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://127.0.0.1:8080/ && \
+               curl -s -o /dev/null http://127.0.0.1:8088/api/stats; then
+              echo "Both services ready (attempt $i)."
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Functional tests (web)
+        run: ./tests/test_web.sh
+
+      - name: Functional tests (sandbox)
+        run: ./tests/test_sandbox.sh --quick
+
+      - name: Stress tests
+        run: |
+          # test_sandbox.sh --quick consumed ~8 /api/run calls in the
+          # current rate-limit window.  Wait for a fresh window so the
+          # sandbox burst scenario reports accurate 10×200 + 40×429.
+          sleep 61
+          ./tests/stress_all.sh
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== sandbox logs ==="
+          docker compose -f docker-compose.ci.yml logs sandbox || true
+          echo "=== web logs ==="
+          docker compose -f docker-compose.ci.yml logs web || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
+
+      # ------------------------------------------------------------------
+      # Push phase — only on main-branch push, and only if tests passed.
+      # The ghcr.io tags were already applied during the build phase; we
+      # just push them.
+      # ------------------------------------------------------------------
+
+      - name: Push base image
+        if: github.event_name != 'pull_request'
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/base:${{ steps.meta.outputs.version }}
+
+      - name: Push web image
+        if: github.event_name != 'pull_request'
+        run: |
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            docker push "$tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
+
+      - name: Push sandbox image
+        if: github.event_name != 'pull_request'
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:${{ steps.meta.outputs.version }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:latest
