@@ -4,5 +4,11 @@
     "worker_count": 32,
     "max_keep_alive": 20,
     "max_body_size": 65536,
-    "keep_alive_timeout": 2000
+    "keep_alive_timeout": 2000,
+
+    "sandbox_host": "127.0.0.1",
+    "sandbox_port": 8088,
+    "sandbox_stats_timeout": 5000,
+    "sandbox_run_timeout": 20000,
+    "debug_logging": false
 }

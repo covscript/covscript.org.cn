@@ -3,5 +3,15 @@
     "worker_count": 16,
     "max_keep_alive": 20,
     "max_body_size": 65536,
-    "keep_alive_timeout": 2000
+    "keep_alive_timeout": 2000,
+
+    "slots": 3,
+    "timeout": 5,
+    "memory": 131072,
+    "max_output_size": 65536,
+    "max_code_size": 65536,
+    "rate_limit": 10,
+    "rate_window_ms": 60000,
+    "data_dir": "./data",
+    "debug_logging": false
 }

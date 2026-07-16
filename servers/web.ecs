@@ -2,14 +2,15 @@ import netutils
 import codec.json
 import argparse
 
-netutils.log_stream = system.out
-
+# ============================================================================
+# Command-line Arguments
+# ============================================================================
 var parser = new argparse.ArgumentParser
 parser.program_name = "ecs web.ecs"
 parser.description = "CovScript Homepage Web Server"
 parser.add_argument("config", true, "JSON config file path")
-parser.add_option("--sandbox_host", false, false, "Sandbox container hostname").set_defaults("--sandbox_host", "127.0.0.1")
-parser.add_option("--sandbox_port", false, false, "Sandbox container port").set_defaults("--sandbox_port", 8088)
+parser.add_option("--sandbox_host", false, false, "Sandbox container hostname")
+parser.add_option("--sandbox_port", false, false, "Sandbox container port")
 
 var args = null
 try
@@ -20,16 +21,78 @@ catch e
     system.exit(0)
 end
 
-var config = json.to_var(json.from_stream(iostream.ifstream(args.config)))
-var sandbox_base = "http://" + args.sandbox_host + ":" + to_string(args.sandbox_port)
+# ============================================================================
+# Configuration (defaults → config file → CLI args)
+# ============================================================================
 
-var server = (new netutils.http_server)
-    .set_config(config)
-    .bind_code(netutils.state_codes.code_404, "404.html")
-    .bind_proxy("/api/stats", sandbox_base, 5000)
-    .bind_proxy("/api/run", sandbox_base, 20000)
-    .listen(config.port)
+# Load the JSON config file first so its values serve as the base.
+var config = null
+try
+    config = json.to_var(json.from_stream(iostream.ifstream(args.config)))
+catch e
+    system.out.println("Failed to load config: " + e.what)
+    system.exit(1)
+end
 
-system.out.println("Web server: http://localhost:" + to_string(config.port))
-system.out.println("Sandbox backend: " + sandbox_base)
-server.run()
+# Per-instance settings with built-in defaults.
+var sandbox_host           = "127.0.0.1"  # sandbox container hostname
+var sandbox_port           = 8088         # sandbox container port
+var sandbox_stats_timeout  = 5000         # proxy timeout for /api/stats (ms)
+var sandbox_run_timeout    = 20000        # proxy timeout for /api/run (ms)
+
+# Override from config file (production settings).
+if config.exist("sandbox_host")
+    sandbox_host = config["sandbox_host"] as string
+end
+if config.exist("sandbox_port")
+    sandbox_port = config["sandbox_port"] as integer
+end
+if config.exist("sandbox_stats_timeout")
+    sandbox_stats_timeout = config["sandbox_stats_timeout"] as integer
+end
+if config.exist("sandbox_run_timeout")
+    sandbox_run_timeout = config["sandbox_run_timeout"] as integer
+end
+if config.exist("debug_logging") && config["debug_logging"] == true
+    netutils.log_stream = system.out
+end
+
+# CLI args are the final override — only when explicitly passed.
+if args.sandbox_host != null
+    sandbox_host = args.sandbox_host
+end
+if args.sandbox_port != null
+    sandbox_port = args.sandbox_port as integer
+end
+
+# Reject invalid proxy timeout values early.
+if sandbox_stats_timeout < 100 || sandbox_stats_timeout > 60000
+    system.out.println("sandbox_stats_timeout must be 100-60000, got " + to_string(sandbox_stats_timeout))
+    system.exit(1)
+end
+if sandbox_run_timeout < 1000 || sandbox_run_timeout > 120000
+    system.out.println("sandbox_run_timeout must be 1000-120000, got " + to_string(sandbox_run_timeout))
+    system.exit(1)
+end
+
+var sandbox_base = "http://" + sandbox_host + ":" + to_string(sandbox_port)
+
+# ============================================================================
+# Server Setup
+# ============================================================================
+
+try
+    var server = (new netutils.http_server)
+        .set_config(config)
+        .bind_code(netutils.state_codes.code_404, "404.html")
+        .bind_proxy("/api/stats", sandbox_base, sandbox_stats_timeout)
+        .bind_proxy("/api/run", sandbox_base, sandbox_run_timeout)
+        .listen(config.port)
+
+    system.out.println("Web server: http://localhost:" + to_string(config.port))
+    system.out.println("Sandbox backend: " + sandbox_base)
+    server.run()
+catch e
+    system.out.println("Error starting server: " + e.what)
+    system.exit(1)
+end
