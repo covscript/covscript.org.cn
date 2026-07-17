@@ -43,7 +43,8 @@ RUN mkdir -p /root/.cspkg \
 # Build network + netutils + argparse from submodule source and install as packages.
 # After this `import network`, `import netutils` and `import argparse` work globally.
 COPY deps/covscript-network /tmp/covscript-network
-RUN cd /tmp/covscript-network && \
+RUN export CS_DEV_PATH=/opt/covscript && \
+    cd /tmp/covscript-network && \
     bash csbuild/make.sh && \
     cspkg build . --install && \
     rm -rf /tmp/covscript-network
