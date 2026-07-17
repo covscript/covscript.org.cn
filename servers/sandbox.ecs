@@ -16,12 +16,13 @@ parser.add_option("--data_dir", false, false, "SQLite database directory")
 parser.add_option("--slots", false, false, "Max concurrent sandbox executions")
 parser.add_option("--timeout", false, false, "Per-execution timeout in seconds")
 parser.add_option("--memory", false, false, "Per-execution memory limit in KB")
+parser.add_option("--debug_logging", true, false, "Enable request logging to stdout")
 
 var args = null
 try
     args = parser.parse_args(context.cmd_args)
 catch e
-    system.out.println(e.what)
+    system.out.println(e.what())
     parser.print_help()
     system.exit(0)
 end
@@ -35,7 +36,7 @@ var config = null
 try
     config = json.to_var(json.from_stream(iostream.ifstream(args.config)))
 catch e
-    system.out.println("Failed to load config: " + e.what)
+    system.out.println("Failed to load config: " + e.what())
     system.exit(1)
 end
 
@@ -79,6 +80,9 @@ if config.exist("debug_logging") && config["debug_logging"] == true
 end
 
 # CLI args are the final override — only when explicitly passed.
+if args.debug_logging != null
+    netutils.log_stream = system.out
+end
 if args.slots != null
     sandbox_slots = args.slots as integer
 end
@@ -339,8 +343,8 @@ function sandbox_handler(server, session)
             insert_stmt.bind(5, duration_ms)
             insert_stmt.just_exec()
         catch e
-            system.out.println("DB insert error: " + e.what)
-            netutils.log("DB insert error: " + e.what)
+            system.out.println("DB insert error: " + e.what())
+            netutils.log("DB insert error: " + e.what())
         end
 
         run_count_total = run_count_total + 1
@@ -370,10 +374,10 @@ function sandbox_handler(server, session)
 
     catch e
         sandbox_release()
-        system.out.println("Sandbox error: " + e.what)
-        netutils.log("Sandbox error: " + e.what)
+        system.out.println("Sandbox error: " + e.what())
+        netutils.log("Sandbox error: " + e.what())
         var err = new hash_map
-        err.insert("error", e.what)
+        err.insert("error", e.what())
         session.send_response(netutils.state_codes.code_500,
             to_json(err), "application/json")
     end
@@ -415,6 +419,6 @@ try
     system.out.println("Data: " + data_dir + "  Slots: " + to_string(sandbox_slots) + "  Timeout: " + to_string(sandbox_timeout_s) + "s  RateLimit: " + to_string(rate_limit) + "/" + to_string(rate_window_ms) + "ms")
     server.run()
 catch e
-    system.out.println("Error starting server: " + e.what)
+    system.out.println("Error starting server: " + e.what())
     system.exit(1)
 end

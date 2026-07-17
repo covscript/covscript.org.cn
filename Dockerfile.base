@@ -4,6 +4,7 @@ FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 curl ca-certificates p7zip-full passwd \
+    cmake g++ make libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ARG CS_TAG=ubuntu-schedule-release
@@ -37,4 +38,12 @@ RUN mkdir -p /root/.cspkg \
        > /root/.cspkg/config.json \
     && chmod -R +x /opt/covscript/bin/ || true \
     && cspkg install --import --yes \
-    && cspkg install ecs_bootstrap network argparse csdbc_sqlite --yes
+    && cspkg install ecs_bootstrap csdbc_sqlite --yes
+
+# Build network + netutils + argparse from submodule source and install as packages.
+# After this `import network`, `import netutils` and `import argparse` work globally.
+COPY deps/covscript-network /tmp/covscript-network
+RUN cd /tmp/covscript-network && \
+    bash csbuild/make.sh && \
+    cspkg build . --install && \
+    rm -rf /tmp/covscript-network

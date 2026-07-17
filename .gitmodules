@@ -1,0 +1,3 @@
+[submodule "deps/covscript-network"]
+	path = deps/covscript-network
+	url = https://github.com/covscript/covscript-network.git

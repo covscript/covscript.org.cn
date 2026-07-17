@@ -11,12 +11,13 @@ parser.description = "CovScript Homepage Web Server"
 parser.add_argument("config", true, "JSON config file path")
 parser.add_option("--sandbox_host", false, false, "Sandbox container hostname")
 parser.add_option("--sandbox_port", false, false, "Sandbox container port")
+parser.add_option("--debug_logging", true, false, "Enable request logging to stdout")
 
 var args = null
 try
     args = parser.parse_args(context.cmd_args)
 catch e
-    system.out.println(e.what)
+    system.out.println(e.what())
     parser.print_help()
     system.exit(0)
 end
@@ -30,7 +31,7 @@ var config = null
 try
     config = json.to_var(json.from_stream(iostream.ifstream(args.config)))
 catch e
-    system.out.println("Failed to load config: " + e.what)
+    system.out.println("Failed to load config: " + e.what())
     system.exit(1)
 end
 
@@ -58,6 +59,9 @@ if config.exist("debug_logging") && config["debug_logging"] == true
 end
 
 # CLI args are the final override — only when explicitly passed.
+if args.debug_logging != null
+    netutils.log_stream = system.out
+end
 if args.sandbox_host != null
     sandbox_host = args.sandbox_host
 end
@@ -93,6 +97,6 @@ try
     system.out.println("Sandbox backend: " + sandbox_base)
     server.run()
 catch e
-    system.out.println("Error starting server: " + e.what)
+    system.out.println("Error starting server: " + e.what())
     system.exit(1)
 end
