@@ -4,6 +4,11 @@ import { useI18n } from 'vue-i18n'
 import PlaygroundSection from '../components/PlaygroundSection.vue'
 
 const { t } = useI18n()
+const sectionRef = ref(null)
+
+function loadExample(ex) {
+  if (sectionRef.value) sectionRef.value.code = ex.code
+}
 
 const examples = [
   {
@@ -32,7 +37,7 @@ const examples = [
         <h3>Examples</h3>
         <ul>
           <li v-for="ex in examples" :key="ex.label">
-            <button class="example-btn" @click="/* populated by PlaygroundSection */">{{ ex.label }}</button>
+            <button class="example-btn" @click="loadExample(ex)">{{ ex.label }}</button>
           </li>
         </ul>
         <div class="sidebar-footer">
@@ -41,7 +46,7 @@ const examples = [
         </div>
       </aside>
       <main class="pg-main">
-        <PlaygroundSection />
+        <PlaygroundSection ref="sectionRef" />
       </main>
     </div>
   </section>

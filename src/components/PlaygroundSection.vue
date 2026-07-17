@@ -39,6 +39,8 @@ function reset() { initCode(); output.value = ''; duration.value = '—' }
 function onTab(e) { if (e.key === 'Tab') { e.preventDefault(); const ta = e.target; const s = ta.selectionStart; ta.value = ta.value.substring(0, s) + '    ' + ta.value.substring(ta.selectionEnd); ta.selectionStart = ta.selectionEnd = s + 4; code.value = ta.value } }
 function onKeydown(e) { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run() } }
 onMounted(fetchStats)
+
+defineExpose({ code })
 </script>
 
 <template>
