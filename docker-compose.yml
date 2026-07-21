@@ -1,6 +1,7 @@
 services:
   web:
     image: ghcr.io/covscript/homepage:latest
+    container_name: covscript-web
     ports:
       - "8080:8080"
     depends_on:
@@ -14,14 +15,16 @@ services:
 
   sandbox:
     image: ghcr.io/covscript/homepage/sandbox:latest
+    container_name: covscript-sandbox
     expose:
       - "8088"
     volumes:
       - sandbox_data:/app/data
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,exec,size=16m,mode=1777
     restart: always
     read_only: true
-    tmpfs:
-      - /tmp:rw,nosuid,nodev,noexec,size=1m,mode=1777
+    pids_limit: 50
     cap_drop:
       - ALL
     security_opt:
@@ -32,6 +35,38 @@ services:
           cpus: '2'
           memory: 1G
           pids: 50
+
+  docker-proxy:
+    image: ghcr.io/covscript/homepage/docker-proxy:latest
+    container_name: covscript-docker-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=4m
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    restart: always
+
+  watchdog:
+    image: ghcr.io/covscript/homepage/watchdog:latest
+    container_name: covscript-watchdog
+    environment:
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      - SANDBOX_CONTAINER=covscript-sandbox
+      - WEB_CONTAINER=covscript-web
+      - WEB_HEALTH_URL=http://web:8080/healthz
+      - INTERVAL_SEC=30
+      - MAX_FAILURES=3
+    depends_on:
+      - docker-proxy
+      - sandbox
+      - web
+    restart: always
 
 volumes:
   sandbox_data:

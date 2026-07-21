@@ -16,7 +16,8 @@ parser.add_option("--data_dir", false, false, "SQLite database directory")
 parser.add_option("--slots", false, false, "Max concurrent sandbox executions")
 parser.add_option("--timeout", false, false, "Per-execution timeout in seconds")
 parser.add_option("--memory", false, false, "Per-execution memory limit in KB")
-parser.add_option("--debug_logging", true, false, "Enable request logging to stdout")
+parser.add_option("--logging", true, false, "Enable request logging to stdout")
+parser.add_option("--isolate", true, false, "Run each execution inside a proot jail")
 
 var args = null
 try
@@ -44,6 +45,7 @@ end
 var sandbox_slots     = 4        # max concurrent executions
 var sandbox_timeout_s = 5        # per-execution wall-clock timeout (seconds)
 var sandbox_memory_kb = 131072   # per-execution memory limit (KB, 128 MB max)
+var sandbox_isolate   = false    # run each execution inside a proot jail
 var max_output_size   = 65536    # output truncation (bytes)
 var max_code_size     = 65536    # request body size limit (bytes)
 var rate_limit        = 10       # max requests per IP per window
@@ -75,13 +77,21 @@ end
 if config.exist("data_dir")
     data_dir = config["data_dir"] as string
 end
-if config.exist("debug_logging") && config["debug_logging"] == true
+if config.exist("isolate") && config["isolate"] == true
+    sandbox_isolate = true
+end
+if config.exist("logging") && config["logging"] == true
     netutils.log_stream = system.out
 end
 
 # CLI args are the final override — only when explicitly passed.
-if args.debug_logging != null
+# has_value=true flags default to false (not null), so test the value
+# directly to distinguish explicit --flag from absent flag.
+if args.logging
     netutils.log_stream = system.out
+end
+if args.isolate
+    sandbox_isolate = true
 end
 if args.slots != null
     sandbox_slots = args.slots as integer
@@ -107,6 +117,17 @@ if sandbox_timeout_s < 1 || sandbox_timeout_s > 30
 end
 if sandbox_memory_kb < 8192 || sandbox_memory_kb > 131072
     system.out.println("memory must be 8192-131072 (128MB max), got " + to_string(sandbox_memory_kb))
+    system.exit(1)
+end
+# Validate required config keys exist before hash_map auto-insert
+# creates spurious entries on first access.
+if !config.exist("port")
+    system.out.println("Config must contain 'port'")
+    system.exit(1)
+end
+var port_val = config["port"] as integer
+if port_val < 1 || port_val > 65535
+    system.out.println("port must be 1-65535, got " + to_string(port_val))
     system.exit(1)
 end
 
@@ -245,44 +266,86 @@ function sandbox_handler(server, session)
     var exit_code = 0
     var timed_out = false
     var duration_ms = 0
+    var tmpdir = ""
     var tmpfile = ""
     var outfile = ""
 
     try
-        # Write code to temp file.  Combine time (ms) + counter + IP to make
-        # collisions between concurrent fibers practically impossible.
+        # Increment run counters early so exceptions that occur after slot
+        # acquisition (disk full, spawn failure) are still reflected in stats.
+        run_count_total = run_count_total + 1
+        var current_date = runtime.utc_time()
+        var date_str = to_string(current_date.year) + "-" + to_string(current_date.mon) + "-" + to_string(current_date.mday)
+        if date_str != today_date
+            today_date = date_str
+            run_count_today = 0
+        end
+        run_count_today = run_count_today + 1
+
+        # Create a per-execution temp directory so user code that runs
+        # destructive commands (rm -rf *, etc.) can only affect its own
+        # workspace.  Combined with Docker's read_only rootfs this
+        # provides defence-in-depth: the server's /app is never at risk.
         tmpfile_counter = tmpfile_counter + 1
         var unique_id = to_string(runtime.time()) + "_" + to_string(tmpfile_counter)
-        tmpfile = "/tmp/sandbox_" + unique_id + ".ecs"
+        tmpdir = "/tmp/sandbox_" + unique_id
+        system.path.mkdir_p(tmpdir)
+        tmpfile = tmpdir + "/code.csc"
         var ofs = iostream.ofstream(tmpfile)
         ofs.write(code)
         ofs.flush()
 
         # Pipe output through head -c to bound file size at source.
-        outfile = tmpfile + ".out"
-        var cmd = "set -o pipefail;" +
+        outfile = tmpdir + "/output.txt"
+        var cmd = ""
+        if sandbox_isolate
+            # proot -0 makes getuid() return 0 inside the jail so that
+            # ulimit can raise hard limits when needed. The code itself has
+            # no real privilege — proot intercepts syscalls.
+            cmd = "proot -r /jail -b /opt/covscript/imports:/opt/covscript/imports -b " + tmpdir + ":/tmp -w /tmp -0 " +
+                  "/bin/bash -c '" +
+                  "set -o pipefail;" +
                   "ulimit -t " + to_string(sandbox_timeout_s) +
                   " -v " + to_string(sandbox_memory_kb) +
-                  " 2>/dev/null;" +
-              "cs " + tmpfile + " 2>&1 | head -c " + to_string(max_output_size) +
+                  " 2>/dev/null && " +
+                  "cs /tmp/code.csc 2>&1 | head -c " + to_string(max_output_size) +
+                  "' > " + outfile + " 2>&1"
+        else
+            cmd = "exec 2>&1;" +
+                  "set -o pipefail;" +
+                  "cd " + tmpdir + "; " +
+                  "ulimit -t " + to_string(sandbox_timeout_s) +
+                  " -v " + to_string(sandbox_memory_kb) +
+                  " 2>/dev/null; " +
+                  "cs " + tmpfile + " 2>&1 | head -c " + to_string(max_output_size) +
                   " > " + outfile
+        end
 
         var pb = new process.builder
         pb.cmd("/bin/bash")
         pb.arg({"-c", cmd})
         var proc = pb.start()
 
-        # Enforce the wall-clock limit and terminate all descendants on expiry.
+        # Cooperative process-wait loop.  wait_poll blocks this fiber
+        # (not the OS thread) and returns when the process exits or the
+        # interval expires.  We poll in 50 ms windows and check the
+        # wall-clock timeout on each wake-up.
         var start_time = runtime.time()
         var finished = false
+        var wall_timed_out = false
 
         loop
+            proc.wait_poll(50, 50)
             if proc.has_exited()
                 finished = true
                 break
             end
             var elapsed = runtime.time() - start_time
-            if elapsed > execution_timeout_ms
+            # Give the kernel's CPU-time limiter time to report its distinct
+            # 137 exit code under container scheduling jitter. Blocking code
+            # still reaches the wall-clock monitor within this bounded grace.
+            if elapsed > execution_timeout_ms + 1000
+                wall_timed_out = true
                 proc.kill_tree(true)
                 proc.wait_poll(1000, 50)
                 timed_out = true
@@ -296,11 +359,6 @@ function sandbox_handler(server, session)
                 end
                 break
             end
-            # Yield the fiber so other connections can make progress.
-            # A tiny delay before yielding prevents a tight spin loop
-            # that would amplify scheduler overhead under concurrency.
-            runtime.delay(1)
-            fiber.yield()
         end
 
         var elapsed = runtime.time() - start_time
@@ -308,11 +366,11 @@ function sandbox_handler(server, session)
 
         # Read the captured output after the process exits.
         if system.path.is_file(outfile)
-            output = netutils.read_file(outfile)
+            output = truncate(netutils.read_file(outfile), max_output_size)
         end
 
-        # Truncate output
-        output = truncate(output, max_output_size)
+        # `head -c` bounds user output at the source, while this final
+        # truncation also handles diagnostics emitted by proot itself.
 
         # Determine exit code.  try_wait() returns the cached exit code for
         # an already-exited process, or null if the process hasn't exited.
@@ -329,8 +387,10 @@ function sandbox_handler(server, session)
                 timed_out = true
             end
         end
-        if timed_out
-            exit_code = -9  # SIGKILL
+        if wall_timed_out
+            # The monitor killed the process tree after its wall-clock budget.
+            # Keep this distinct from ulimit's CPU timeout (exit code 137).
+            exit_code = -9
         end
 
         # Log to database
@@ -346,15 +406,6 @@ function sandbox_handler(server, session)
             system.out.println("DB insert error: " + e.what())
             netutils.log("DB insert error: " + e.what())
         end
-
-        run_count_total = run_count_total + 1
-        var current_date = runtime.utc_time()
-        var date_str = to_string(current_date.year) + "-" + to_string(current_date.mon) + "-" + to_string(current_date.mday)
-        if date_str != today_date
-            today_date = date_str
-            run_count_today = 0
-        end
-        run_count_today = run_count_today + 1
 
         # Build JSON response
         var resp = new hash_map
@@ -381,13 +432,15 @@ function sandbox_handler(server, session)
         session.send_response(netutils.state_codes.code_500,
             to_json(err), "application/json")
     end
-    # Cleanup — guard against uninitialized paths when an exception
-    # occurred before tmpfile / outfile were assigned.
-    if !tmpfile.empty()
-        system.file.remove(tmpfile)
-    end
-    if !outfile.empty()
-        system.file.remove(outfile)
+    # Cleanup — remove the entire per-execution temp directory.
+    # Wrapped in its own try-catch so a cleanup failure (unlikely)
+    # does not crash the worker fiber.
+    try
+        if !tmpdir.empty() && system.path.exist(tmpdir)
+            system.file.remove(tmpdir)
+        end
+    catch e
+        netutils.log("Cleanup error: " + e.what())
     end
 end
 

@@ -1,0 +1,5 @@
+FROM docker:cli
+RUN apk add --no-cache bash curl
+COPY scripts/watchdog.sh /watchdog.sh
+RUN chmod +x /watchdog.sh
+ENTRYPOINT ["/watchdog.sh"]

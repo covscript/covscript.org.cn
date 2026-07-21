@@ -10,5 +10,5 @@
     "sandbox_port": 8088,
     "sandbox_stats_timeout": 5000,
     "sandbox_run_timeout": 20000,
-    "debug_logging": false
+    "logging": false
 }

@@ -4,7 +4,7 @@ FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 curl ca-certificates p7zip-full passwd \
-    cmake g++ make libssl-dev \
+    cmake g++ make libssl-dev proot \
     && rm -rf /var/lib/apt/lists/*
 
 ARG CS_TAG=ubuntu-schedule-release
@@ -48,3 +48,17 @@ RUN export CS_DEV_PATH=/opt/covscript && \
     bash csbuild/make.sh && \
     cspkg build . --install && \
     rm -rf /tmp/covscript-network
+
+# Build minimal proot jail for sandbox isolation.
+# Only cs + bash + head and their shared-library deps are copied;
+# user code inside the jail sees no /app, /etc, /home, /root, or /proc.
+RUN mkdir -p /jail/tmp /jail/dev /jail/etc /jail/usr/bin /jail/bin /jail/opt/covscript && \
+    cp -a /dev/null /dev/zero /dev/urandom /dev/random /jail/dev/ 2>/dev/null || true && \
+    echo 'root:x:0:0:root:/root:/bin/bash' > /jail/etc/passwd && \
+    cp /opt/covscript/bin/cs /jail/usr/bin/cs && \
+    cp /usr/bin/head /jail/usr/bin/head && \
+    cp /bin/bash /jail/bin/bash && \
+    cp /bin/false /jail/bin/sh && \
+    ldd /opt/covscript/bin/cs /bin/bash /usr/bin/head /bin/false | \
+    awk '/=> \// {print $3}; /^[[:space:]]*\/[^ ]+ \(/ {print $1}' | sort -u | \
+    xargs -I{} sh -c 'mkdir -p /jail/$(dirname {}) && cp {} /jail/{}'

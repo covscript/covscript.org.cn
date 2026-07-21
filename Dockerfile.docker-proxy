@@ -1,0 +1,5 @@
+FROM docker:cli
+RUN apk add --no-cache nginx
+COPY configs/docker-proxy.conf /etc/nginx/nginx.conf
+ENTRYPOINT []
+CMD ["nginx", "-e", "/dev/stderr", "-g", "daemon off;"]

@@ -9,7 +9,7 @@ cspkg build ./deps/covscript-network/netutils.ecs --compile &
 npm install && npm run build &
 wait
 
-ecs $ECS_FLAGS ./servers/sandbox.ecs ./configs/sandbox.json --debug_logging > sandbox.log 2>&1 &
-ecs $ECS_FLAGS ./servers/web.ecs ./configs/web.json --debug_logging > web.log 2>&1 &
+ecs $ECS_FLAGS ./servers/sandbox.ecs ./configs/sandbox.json --logging > sandbox.log 2>&1 &
+ecs $ECS_FLAGS ./servers/web.ecs ./configs/web.json --logging > web.log 2>&1 &
 echo "Service start successfully. Visit http://localhost:8080 to access the web service."
 wait

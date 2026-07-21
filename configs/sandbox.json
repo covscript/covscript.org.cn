@@ -13,5 +13,6 @@
     "rate_limit": 10,
     "rate_window_ms": 60000,
     "data_dir": "./data",
-    "debug_logging": false
+    "logging": false,
+    "isolate": false
 }

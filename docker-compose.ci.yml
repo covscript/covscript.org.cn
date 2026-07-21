@@ -9,9 +9,14 @@ services:
       - "8088:8088"
     volumes:
       - sandbox_data:/app/data
-    read_only: true
     tmpfs:
-      - /tmp:rw,nosuid,nodev,noexec,size=1m,mode=1777
+      - /tmp:rw,nosuid,nodev,exec,size=16m,mode=1777
+    read_only: true
+    pids_limit: 50
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: "no"
 
   web:

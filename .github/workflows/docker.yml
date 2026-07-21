@@ -110,6 +110,32 @@ jobs:
             covscript-sandbox:ci
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build watchdog image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.watchdog
+          push: false
+          load: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/watchdog:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/watchdog:latest
+            covscript-watchdog:ci
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build Docker socket proxy image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.docker-proxy
+          push: false
+          load: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/docker-proxy:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/docker-proxy:latest
+            covscript-docker-proxy:ci
+          labels: ${{ steps.meta.outputs.labels }}
+
       # ------------------------------------------------------------------
       # Test phase — spin up the full stack, run the test suite, tear down.
       # Any non-zero exit code stops the job and prevents the push.
@@ -177,3 +203,15 @@ jobs:
         run: |
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:${{ steps.meta.outputs.version }}
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:latest
+
+      - name: Push watchdog image
+        if: github.event_name != 'pull_request'
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/watchdog:${{ steps.meta.outputs.version }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/watchdog:latest
+
+      - name: Push Docker socket proxy image
+        if: github.event_name != 'pull_request'
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/docker-proxy:${{ steps.meta.outputs.version }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/docker-proxy:latest

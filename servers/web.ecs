@@ -11,7 +11,7 @@ parser.description = "CovScript Homepage Web Server"
 parser.add_argument("config", true, "JSON config file path")
 parser.add_option("--sandbox_host", false, false, "Sandbox container hostname")
 parser.add_option("--sandbox_port", false, false, "Sandbox container port")
-parser.add_option("--debug_logging", true, false, "Enable request logging to stdout")
+parser.add_option("--logging", true, false, "Enable request logging to stdout")
 
 var args = null
 try
@@ -54,12 +54,14 @@ end
 if config.exist("sandbox_run_timeout")
     sandbox_run_timeout = config["sandbox_run_timeout"] as integer
 end
-if config.exist("debug_logging") && config["debug_logging"] == true
+if config.exist("logging") && config["logging"] == true
     netutils.log_stream = system.out
 end
 
 # CLI args are the final override — only when explicitly passed.
-if args.debug_logging != null
+# has_value=true flags default to false (not null), so test the value
+# directly to distinguish explicit --flag from absent flag.
+if args.logging
     netutils.log_stream = system.out
 end
 if args.sandbox_host != null
@@ -78,6 +80,18 @@ if sandbox_run_timeout < 1000 || sandbox_run_timeout > 120000
     system.out.println("sandbox_run_timeout must be 1000-120000, got " + to_string(sandbox_run_timeout))
     system.exit(1)
 end
+# sandbox_run_timeout must exceed the sandbox server's execution
+# timeout (timeout_s * 1000) so the proxy does not cut off long-running
+# but valid sandbox requests.  Keep sandbox_run_timeout >= sandbox timeout + 15 s.
+if !config.exist("port")
+    system.out.println("Config must contain 'port'")
+    system.exit(1)
+end
+var port_val = config["port"] as integer
+if port_val < 1 || port_val > 65535
+    system.out.println("port must be 1-65535, got " + to_string(port_val))
+    system.exit(1)
+end
 
 var sandbox_base = "http://" + sandbox_host + ":" + to_string(sandbox_port)
 
@@ -89,12 +103,18 @@ try
     var server = (new netutils.http_server)
         .set_config(config)
         .bind_code(netutils.state_codes.code_404, "404.html")
+        .bind_func("/healthz", [](server, session){
+            session.send_response(netutils.state_codes.code_200, "ok", "text/plain")
+        })
         .bind_proxy("/api/stats", sandbox_base, sandbox_stats_timeout)
         .bind_proxy("/api/run", sandbox_base, sandbox_run_timeout)
         .listen(config.port)
 
     system.out.println("Web server: http://localhost:" + to_string(config.port))
     system.out.println("Sandbox backend: " + sandbox_base)
+    system.out.println("NOTE: No startup health check against the sandbox — if " +
+        sandbox_host + ":" + to_string(sandbox_port) + " is unreachable, " +
+        "/api/run and /api/stats will return 502 errors.")
     server.run()
 catch e
     system.out.println("Error starting server: " + e.what())

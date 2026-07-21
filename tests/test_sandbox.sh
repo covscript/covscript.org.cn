@@ -34,6 +34,20 @@ run_code() {
 
 echo "=== Sandbox tests against $BASE ==="
 
+# Allow a freshly started Compose service to finish opening its listener.
+ready=0
+for _ in $(seq 1 30); do
+    if curl -fsS -m 1 "$BASE/api/stats" >/dev/null 2>&1; then
+        ready=1
+        break
+    fi
+    sleep 1
+done
+if [ "$ready" -ne 1 ]; then
+    echo "Sandbox did not become ready at $BASE"
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 echo "--- Phase 0: /api/stats ---"
 code=$(curl -s -m 5 -o "$BODY_FILE" -w '%{http_code}' "$BASE/api/stats")
@@ -42,7 +56,7 @@ total=$(jfield "$BODY_FILE" total)
 [ -n "$total" ] && ok "stats has numeric total ($total)" || bad "stats missing total"
 
 # ---------------------------------------------------------------------------
-# Phase 1: functional — uses 8 of the 10-requests/min budget
+# Phase 1: functional — uses all 10 requests of the per-minute budget
 echo "--- Phase 1: functional ---"
 
 run_code 'system.out.println("Hello, CovScript!")'                       # run 1
@@ -69,24 +83,44 @@ python3 -c "print('# pad\n' * 12000)" | curl -s -m 10 -o "$BODY_FILE" -w '%{http
     -X POST --data-binary @- "$API" > /tmp/oversize_code.txt
 check "$(cat /tmp/oversize_code.txt)" 413 "oversized code rejected"
 
-run_code 'foreach i in range(100000) do system.out.println("line " + to_string(i))'  # run 5
+run_code 'try
+    system.path.mkdir_p("/app/data/escape_probe")
+    system.out.println(system.path.exist("/app/data/escape_probe"))
+catch e
+    system.out.println("blocked")
+end
+# Parent traversal from the bound /tmp must remain within the jail.
+system.out.println(system.path.exist("/app/config.json"))
+system.out.println(system.path.exist("/proc/self/status"))
+system.out.println(system.path.exist("/tmp/../app/config.json"))'       # run 5
+check "$(jfield "$BODY_FILE" output)" $'false\nfalse\nfalse\nfalse' "jail blocks host paths, traversal, and writes"
+
+# The minimal jail exposes a rejecting /bin/sh stub, so system.run cannot
+# execute a destructive shell command or any shell builtin.
+run_code 'system.out.println(system.run("rm -rf *"))'                   # run 6
+rm_result=$(jfield "$BODY_FILE" output)
+if [ "$rm_result" != "0" ]; then ok "rm -rf command is rejected in jail ($rm_result)"; else bad "rm -rf command unexpectedly succeeded"; fi
+
+run_code 'foreach i in range(100000) do system.out.println("line " + to_string(i))'  # run 7
 outlen=$(python3 -c "import json;print(len(json.load(open('$BODY_FILE'))['output']))")
 check "$outlen" 65536 "output truncated to 64KB"
 
-run_code 'runtime.delay(20000)'                                          # run 6
+run_code 'runtime.delay(20000)'                                          # run 8
 check "$(jfield "$BODY_FILE" timed_out)" True "sleep hang -> timed_out"
 check "$(jfield "$BODY_FILE" exit_code)" -9 "sleep hang -> SIGKILL"
 
 run_code 'loop
     var x = 1
-end'                                                                     # run 7
+end'                                                                     # run 9
 check "$(jfield "$BODY_FILE" timed_out)" True "cpu hang -> timed_out (ulimit -t / 137)"
-check "$(jfield "$BODY_FILE" exit_code)" -9 "cpu hang -> normalized SIGKILL"
+# ulimit -t kills with SIGKILL; exit code 137 = 128+9 is now preserved
+# for diagnostics instead of being normalized to -9.
+check "$(jfield "$BODY_FILE" exit_code)" 137 "cpu hang -> 137 (ulimit SIGKILL)"
 
 run_code 'var s = "xxxxxxxxxxxxxxxx"
 loop
     s = s + s
-end'                                                                     # run 8
+end'                                                                     # run 10
 grep -q "bad_alloc" "$BODY_FILE" && ok "memory bomb hits ulimit -v" || bad "memory bomb not contained: $(cat "$BODY_FILE")"
 
 if [ "$QUICK" = 1 ]; then
