@@ -158,7 +158,11 @@ jobs:
         run: ./tests/test_web.sh
 
       - name: Functional tests (sandbox)
-        run: ./tests/test_sandbox.sh --quick
+        run: |
+          # The web suite makes two proxied /api/run calls. Wait for the
+          # sandbox's 10-per-minute limit to reset before its 10-call suite.
+          sleep 61
+          ./tests/test_sandbox.sh --quick
 
       - name: Stress tests
         run: |
